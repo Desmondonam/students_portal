@@ -9,6 +9,8 @@ interface AuthContextValue {
   profile: Profile | null
   loading: boolean
   signInWithGoogle: () => Promise<void>
+  signInWithEmail: (email: string, password: string) => Promise<{ error: string | null }>
+  signUpWithEmail: (email: string, password: string) => Promise<{ error: string | null; needsVerification: boolean }>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
 }
@@ -64,10 +66,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function signInWithGoogle() {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
     })
+  }
+
+  async function signInWithEmail(email: string, password: string): Promise<{ error: string | null }> {
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (!error) return { error: null }
+
+    if (error.message.toLowerCase().includes('email not confirmed')) {
+      return { error: 'Please verify your email before signing in. Check your inbox for the verification link.' }
+    }
+    if (error.message.toLowerCase().includes('invalid login credentials')) {
+      return { error: 'Incorrect email or password. Please try again.' }
+    }
+    return { error: error.message }
+  }
+
+  async function signUpWithEmail(
+    email: string,
+    password: string,
+  ): Promise<{ error: string | null; needsVerification: boolean }> {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+    })
+
+    if (error) {
+      if (error.message.toLowerCase().includes('already registered')) {
+        return { error: 'An account with this email already exists. Please sign in.', needsVerification: false }
+      }
+      return { error: error.message, needsVerification: false }
+    }
+
+    // Supabase returns a session immediately when email confirmation is disabled,
+    // or identities array is empty when confirmation is required.
+    const needsVerification = !data.session
+    return { error: null, needsVerification }
   }
 
   async function signOut() {
@@ -76,7 +112,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, session, profile, loading, signInWithGoogle, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{
+      user, session, profile, loading,
+      signInWithGoogle, signInWithEmail, signUpWithEmail, signOut, refreshProfile,
+    }}>
       {children}
     </AuthContext.Provider>
   )
